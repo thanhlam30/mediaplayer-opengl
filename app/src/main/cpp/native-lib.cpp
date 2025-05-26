@@ -38,3 +38,9 @@ Java_com_example_mediaplayer_GLVideoView_nativeInit(JNIEnv *env, jobject thiz, j
     startVideoRenderer(window, static_cast<GLuint>(texture_id), g_vm, g_surfaceTexture,
                        g_updateTexImageMethod);
 }
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_example_mediaplayer_GLVideoView_stopVideoRenderer(JNIEnv *env, jobject thiz) {
+    stopVideoRenderer();
+}

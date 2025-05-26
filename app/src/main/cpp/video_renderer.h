@@ -11,4 +11,5 @@
 void startVideoRenderer(ANativeWindow *window, GLuint textureId, _JavaVM *pVm, _jobject *pJobject,
                         _jmethodID *pId);
 
+void stopVideoRenderer();
 #endif //MEDIAPLAYER_VIDEO_RENDERER_H

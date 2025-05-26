@@ -8,10 +8,15 @@
 #include <GLES2/gl2ext.h>
 #include <thread>
 #include <chrono>
+#include <atomic>
 #include <android/log.h>
 #include <jni.h>
 
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "VideoRenderer", __VA_ARGS__)
+
+static std::atomic<bool> gRunning(false);
+static std::thread gRenderThread;
+static ANativeWindow* gWindow = nullptr;
 
 static const char *vertexShaderSrc = R"(
 attribute vec4 aPosition;
@@ -34,11 +39,10 @@ void main() {
 )";
 
 static const GLfloat vertices[] = {
-        // X,   Y,    U,   V
-        -1, -1,  0.0f, 1.0f,
-        1, -1,  1.0f, 1.0f,
-        -1,  1,  0.0f, 0.0f,
-        1,  1,  1.0f, 0.0f,
+        -1.0f, -0.5625f, 0.0f, 1.0f,
+        1.0f, -0.5625f, 1.0f, 1.0f,
+        -1.0f,  0.5625f, 0.0f, 0.0f,
+        1.0f,  0.5625f, 1.0f, 0.0f,
 };
 
 GLuint loadShader(GLenum type, const char *src) {
@@ -74,8 +78,38 @@ GLuint createProgram() {
     return program;
 }
 
+void stopVideoRenderer() {
+    LOGI("Stopping renderer thread...");
+    if (!gRunning) return;
+
+    gRunning = false;
+
+    if (gRenderThread.joinable()) {
+        gRenderThread.join();
+        LOGI("Renderer thread joined.");
+    }
+
+    if (gWindow) {
+        ANativeWindow_release(gWindow);
+        gWindow = nullptr;
+        LOGI("ANativeWindow released.");
+    }
+}
+
 void startVideoRenderer(ANativeWindow *window, GLuint textureId, JavaVM* vm, jobject surfaceTexture, jmethodID updateTexImageMethod) {
-    std::thread([window, textureId, vm, surfaceTexture, updateTexImageMethod]() {
+    if (gRunning) {
+        LOGI("Renderer already running");
+        return;
+    }
+
+    gRunning = true;
+
+    if (gWindow != nullptr) {
+        ANativeWindow_release(gWindow);
+    }
+    gWindow = window;
+
+    gRenderThread = std::thread([window, textureId, vm, surfaceTexture, updateTexImageMethod]() {
         JNIEnv* env;
         if (vm->AttachCurrentThread(&env, nullptr) != JNI_OK) {
             LOGI("Failed to attach thread to JVM");
@@ -110,8 +144,8 @@ void startVideoRenderer(ANativeWindow *window, GLuint textureId, JavaVM* vm, job
         glViewport(0, 0, ANativeWindow_getWidth(window), ANativeWindow_getHeight(window));
         glClearColor(0, 0, 0, 1);
 
-        while (true) {
-            // **Gọi updateTexImage() trên SurfaceTexture mỗi frame**
+        while (gRunning) {
+            // Gọi updateTexImage() trên SurfaceTexture mỗi frame
             env->CallVoidMethod(surfaceTexture, updateTexImageMethod);
 
             glClear(GL_COLOR_BUFFER_BIT);
@@ -133,7 +167,13 @@ void startVideoRenderer(ANativeWindow *window, GLuint textureId, JavaVM* vm, job
             std::this_thread::sleep_for(std::chrono::milliseconds(16)); // ~60fps
         }
 
-        vm->DetachCurrentThread();
-    }).detach();
-}
+        eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        eglDestroySurface(display, surface);
+        eglDestroyContext(display, context);
+        eglTerminate(display);
 
+        vm->DetachCurrentThread();
+
+        LOGI("Renderer thread exited cleanly.");
+    });
+}
